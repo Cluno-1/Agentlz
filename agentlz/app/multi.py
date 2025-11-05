@@ -13,7 +13,7 @@ def query(message: str):
     """使用多Agent系统处理用户查询
     
     Args:
-        message: 用户查询内容
+        message: 用户查询内容: 中国北京天气怎么样和根据论文,中国最流行的开发是什么
     """
     try:
         logger.info(f"收到查询请求: {message}")

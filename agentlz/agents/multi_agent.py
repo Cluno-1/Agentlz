@@ -28,7 +28,7 @@ class MultiAgent:
         """执行论文检索Agent"""
         try:
             result = get_thesis_info(query)
-            return result.dict()
+            return result.model_dump()
         except Exception as e:
             self.logger.error(f"Thesis agent execution failed: {str(e)}")
             raise
