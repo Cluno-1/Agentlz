@@ -6,7 +6,6 @@ from langchain_core.messages import HumanMessage
 from mcp.server.fastmcp import FastMCP
 from langchain.agents import create_agent
 from langchain_mcp_adapters.client import MultiServerMCPClient
-
 from agentlz.config.settings import settings
 
 # 创建MCP服务器
