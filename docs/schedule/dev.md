@@ -4,7 +4,7 @@
 
 - 新增 agentlz/agents/schedule_1_agent.py
   - 读取 agent_tables/plan.py 、 check.py 、 tools.py 的可信度表；
-  - 表为空时直接返回“不执行任何调用”的响应；
+  - 表为空时也需要llm自动做出决策
   - 存在 plan 时输出最小化的“步骤骨架”和工具/检查候选（暂不触发远程 MCP 调用）。
 - 更新 agentlz/schemas/responses.py
   - 增加 ScheduleResponse 响应模型，统一返回字段（ status 、 selected_plan_agent_id 、 selected_tools_agent_ids 、 steps 、 check_passed 、 final_summary 、 error ）。
@@ -39,11 +39,11 @@
   - 步骤 1：根据规范调用第一个工具（占位，不实际远程调用）
   - 步骤 2：调用检查 Agent 校验输出（占位）
 - 空表处理：
-  - plan 空 → status = "no_plan_agents" ，不执行调用
+  - plan 空 → status = "no_plan_agents" ，llm自动做出决策
   - tools 或 check 空 → status = "missing_tools_or_checks" ，仅输出骨架
 ## 后续工作
 
-- 当前实现为“最小可执行版本”，仅输出规范与骨架；未集成 MCP 客户端的真实远程调用。
+- 当前实现为“最小可执行版本”，未集成 MCP 客户端的真实远程调用。
 - 下一步可按 endpoint 接入 MCP 客户端（例如 STDIO/HTTP），完成：
   - 调用最高可信度 plan 生成 check list/执行大纲
   - 按顺序调用 tools 并传参

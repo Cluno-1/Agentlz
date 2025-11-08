@@ -65,7 +65,7 @@
 
 ## 编码与命名规范
 
-- 语言与版本：Python ≥ 3.10，必须使用类型标注（type hints）。
+- 语言与版本：Python = 3.14，必须使用类型标注（type hints）。
 - 风格与格式：统一使用 `black`（格式化）、`ruff`（lint）、`isort`（导入排序）。
 - 模块命名：职责清晰（`*_agent.py`、`*_tool.py`、`*_graph.py`、`*_service.py`）。
 - 文档与注释：采用 Google/NumPy 风格 Docstring；公开函数与类必须有 Docstring。

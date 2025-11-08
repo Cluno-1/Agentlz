@@ -4,6 +4,7 @@ from agentlz.config.settings import get_settings
 from agentlz.core.logger import setup_logging
 from agentlz.core.model_factory import get_model
 from agentlz.schemas.responses import ScheduleResponse, PlanStep
+from langchain.agents import create_agent
 
 # 可信度表（MCP）导入：若为空则表示无可用 Agent
 try:
@@ -57,7 +58,7 @@ class Schedule1Agent:
         steps: List[PlanStep],
         extra_notes: Optional[str] = None,
     ) -> str:
-        from langchain.agents import create_agent
+        
         # Fallback 简述
         fallback = (
             f"状态: {status}；Plan: {plan_id or '无'}；Tools: {tools_ids or []}；"
@@ -90,35 +91,129 @@ class Schedule1Agent:
             )
         return str(result) if result else fallback
 
+    def _llm_direct_answer(self, query: str) -> str:
+        """When no plan is needed, directly use LLM to answer the query."""
+        if self.model is None:
+            return "模型未加载，无法回答。"
+
+        agent = create_agent(
+            model=self.model,
+            tools=[],
+            system_prompt="你是一个乐于助人的助手，请直接回答用户的问题。",
+        )
+        try:
+            result: Any = agent.invoke({"messages": [{"role": "user", "content": query}]})
+            
+            if isinstance(result, dict):
+                output = (
+                    result.get("output")
+                    or result.get("final_output")
+                    or result.get("structured_response")
+                )
+                if output:
+                    return output
+
+            if result:
+                return str(result)
+            
+            return "抱歉，我无法生成回答。"
+        except Exception as e:
+            self.logger.error(f"Error during direct LLM answer: {e}")
+            return "在直接回答时发生错误。"
+    # 计划代理, 当没有plan agent时使用
+    def _llm_generate_plan(
+        self,
+        query: str,
+        tools_candidates: List[Dict[str, Any]],
+        check_candidates: List[Dict[str, Any]],
+    ) -> tuple[List[str], List[str], List[PlanStep]]:
+        """使用 LLM 生成计划、工具和检查列表，当没有 plan agent 时。"""
+
+        if self.model is None:
+            return [], [], []
+
+        agent = create_agent(
+            model=self.model,
+            tools=[],
+            system_prompt="你是一个调度代理，当没有可用的计划代理时，基于用户查询生成一个简单的执行计划，包括工具调用和检查步骤。请输出工具 ID 列表、检查 ID 列表和计划步骤列表。",
+        )
+
+        context = {
+            "query": query,
+            "available_tools": [a.get("id") for a in tools_candidates],
+            "available_checks": [a.get("id") for a in check_candidates],
+        }
+
+        result: Any = agent.invoke({"messages": [{"role": "user", "content": str(context)}]})
+
+        # 假设 result 是结构化的输出，解析它
+        # 这里需要根据实际 LLM 输出解析，假设它返回 dict
+        if isinstance(result, dict):
+            tools_ids = result.get("tools_ids", [])
+            check_ids = result.get("check_ids", [])
+            steps = [PlanStep(**step) for step in result.get("steps", [])]
+        else:
+            # Fallback 解析
+            tools_ids = []
+            check_ids = []
+            steps = []
+
+        return tools_ids, check_ids, steps
+
     def execute(self, query: str) -> ScheduleResponse:
         """执行调度流程（最小化版本）。
 
         规则：
         - 优先选取最高可信度的 plan agent。
         - 输出占位的步骤（不真正调用 MCP），并列出 tools/check 候选。
-        - 若任一可信度表为空，则标记为相应的状态并不执行调用。
         """
 
         # 1) 选择 plan agent（最高可信度）
         top_plan = self._select_top(PLAN_AGENTS)
         if not top_plan:
             self.logger.info("没有可用的 Plan MCP Agent（plan 可信度表为空）")
+
+            # 整理 tools/check 候选（按可信度降序）
+            tools_candidates = self._sort_by_trust(TOOLS_AGENTS)
+            check_candidates = self._sort_by_trust(CHECK_AGENTS)
+            selected_tool_ids = [a.get("id") for a in tools_candidates]
+            selected_check_ids = [a.get("id") for a in check_candidates]
+
+            # 使用 LLM 生成计划
+            generated_tools, generated_checks, generated_steps = self._llm_generate_plan(
+                query, tools_candidates, check_candidates
+            )
+
+            if not generated_steps:
+                # If no plan is generated, it's likely a simple chat query.
+                # Answer directly using the LLM.
+                final_summary = self._llm_direct_answer(query)
+                return ScheduleResponse(
+                    query=query,
+                    status="direct_answer",
+                    selected_plan_agent_id=None,
+                    selected_tools_agent_ids=[],
+                    steps=[],
+                    check_passed=None,
+                    final_summary=final_summary,
+                )
+
             final_summary = self._llm_summarize(
                 query=query,
-                status="no_plan_agents",
+                status="auto_planned",
                 plan_id=None,
-                tools_ids=[],
-                check_ids=[],
-                steps=[],
-                extra_notes="未检测到规划代理，进行基础判断与总结。",
+                tools_ids=generated_tools,
+                check_ids=generated_checks,
+                steps=generated_steps,
+                extra_notes="没有计划代理，使用 LLM 自动生成计划和工具调用。",
             )
             return ScheduleResponse(
                 query=query,
-                status="no_plan_agents",
+                status="auto_planned",
                 selected_plan_agent_id=None,
-                selected_tools_agent_ids=[],
-                steps=[],
-                check_passed=None,
+                selected_tools_agent_ids=generated_tools,
+                steps=generated_steps,
+                check_passed=False,
                 final_summary=final_summary,
             )
 
