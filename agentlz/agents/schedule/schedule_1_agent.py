@@ -6,6 +6,11 @@ from agentlz.core.model_factory import get_model
 from agentlz.schemas.responses import ScheduleResponse, PlanStep
 from langchain.agents import create_agent
 
+# 导入提示词
+from agentlz.prompts.schedule.system import SYSTEM_SCHEDULE_1_PROMPT
+from agentlz.prompts.schedule.direct_answer import DIRECT_ANSWER_PROMPT
+from agentlz.prompts.schedule.plan_generation import PLAN_GENERATION_PROMPT
+
 # 可信度表（MCP）导入：若为空则表示无可用 Agent
 try:
     from agentlz.agent_tables.plan import PLAN_AGENTS  # type: ignore
@@ -33,6 +38,18 @@ class Schedule1Agent:
     """
 
     def __init__(self) -> None:
+        """
+        初始化 Schedule1Agent 实例
+        
+        参数:
+            无
+            
+        返回值:
+            None
+            
+        异常:
+            可能抛出配置加载或日志设置相关的异常
+        """
         settings = get_settings()
         self.settings = settings
         self.logger = setup_logging(settings.log_level)
@@ -40,12 +57,36 @@ class Schedule1Agent:
 
     @staticmethod
     def _select_top(agents: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """
+        从代理列表中选出可信度最高的代理
+        
+        参数:
+            agents: 代理列表，每个代理包含可信度信息
+            
+        返回值:
+            Optional[Dict[str, Any]]: 可信度最高的代理，如果列表为空则返回 None
+            
+        异常:
+            无
+        """
         if not agents:
             return None
         return sorted(agents, key=lambda x: x.get("trust", 0), reverse=True)[0]
 
     @staticmethod
     def _sort_by_trust(agents: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        按可信度降序排序代理列表
+        
+        参数:
+            agents: 代理列表，每个代理包含可信度信息
+            
+        返回值:
+            List[Dict[str, Any]]: 按可信度降序排序后的代理列表
+            
+        异常:
+            无
+        """
         return sorted(agents, key=lambda x: x.get("trust", 0), reverse=True)
 
     def _llm_summarize(
@@ -58,6 +99,24 @@ class Schedule1Agent:
         steps: List[PlanStep],
         extra_notes: Optional[str] = None,
     ) -> str:
+        """
+        使用 LLM 汇总调度执行结果
+        
+        参数:
+            query: 用户查询字符串
+            status: 执行状态
+            plan_id: 计划代理 ID，可选
+            tools_ids: 工具代理 ID 列表
+            check_ids: 检查代理 ID 列表
+            steps: 计划步骤列表
+            extra_notes: 额外备注信息，可选
+            
+        返回值:
+            str: 汇总后的结果字符串
+            
+        异常:
+            可能抛出 LLM 调用相关的异常
+        """
         
         # Fallback 简述
         fallback = (
@@ -69,7 +128,7 @@ class Schedule1Agent:
         agent = create_agent(
             model=self.model,
             tools=[],
-            system_prompt=self.settings.system_prompt,
+            system_prompt=SYSTEM_SCHEDULE_1_PROMPT,
         )
         # 构造汇总输入
         context = {
@@ -92,14 +151,25 @@ class Schedule1Agent:
         return str(result) if result else fallback
 
     def _llm_direct_answer(self, query: str) -> str:
-        """When no plan is needed, directly use LLM to answer the query."""
+        """
+        当不需要计划时，直接使用 LLM 回答用户查询
+        
+        参数:
+            query: 用户查询字符串
+            
+        返回值:
+            str: 直接回答的结果字符串
+            
+        异常:
+            可能抛出 LLM 调用相关的异常，异常会被捕获并记录日志
+        """
         if self.model is None:
             return "模型未加载，无法回答。"
 
         agent = create_agent(
             model=self.model,
             tools=[],
-            system_prompt="你是一个乐于助人的助手，请直接回答用户的问题。",
+            system_prompt=DIRECT_ANSWER_PROMPT,
         )
         try:
             result: Any = agent.invoke({"messages": [{"role": "user", "content": query}]})
@@ -120,14 +190,29 @@ class Schedule1Agent:
         except Exception as e:
             self.logger.error(f"Error during direct LLM answer: {e}")
             return "在直接回答时发生错误。"
-    # 计划代理, 当没有plan agent时使用
     def _llm_generate_plan(
         self,
         query: str,
         tools_candidates: List[Dict[str, Any]],
         check_candidates: List[Dict[str, Any]],
     ) -> tuple[List[str], List[str], List[PlanStep]]:
-        """使用 LLM 生成计划、工具和检查列表，当没有 plan agent 时。"""
+        """
+        使用 LLM 生成计划、工具和检查列表，当没有 plan agent 时
+        
+        参数:
+            query: 用户查询字符串
+            tools_candidates: 工具代理候选列表
+            check_candidates: 检查代理候选列表
+            
+        返回值:
+            tuple[List[str], List[str], List[PlanStep]]: 
+                - 工具 ID 列表
+                - 检查 ID 列表  
+                - 计划步骤列表
+            
+        异常:
+            可能抛出 LLM 调用相关的异常
+        """
 
         if self.model is None:
             return [], [], []
@@ -135,7 +220,7 @@ class Schedule1Agent:
         agent = create_agent(
             model=self.model,
             tools=[],
-            system_prompt="你是一个调度代理，当没有可用的计划代理时，基于用户查询生成一个简单的执行计划，包括工具调用和检查步骤。请输出工具 ID 列表、检查 ID 列表和计划步骤列表。",
+            system_prompt=PLAN_GENERATION_PROMPT,
         )
 
         context = {
@@ -161,8 +246,18 @@ class Schedule1Agent:
         return tools_ids, check_ids, steps
 
     def execute(self, query: str) -> ScheduleResponse:
-        """执行调度流程（最小化版本）。
-
+        """
+        执行调度流程（最小化版本）
+        
+        参数:
+            query: 用户查询字符串
+            
+        返回值:
+            ScheduleResponse: 调度响应对象，包含执行结果
+            
+        异常:
+            可能抛出 LLM 调用或数据处理相关的异常
+            
         规则：
         - 优先选取最高可信度的 plan agent。
         - 输出占位的步骤（不真正调用 MCP），并列出 tools/check 候选。
@@ -285,18 +380,18 @@ class Schedule1Agent:
         )
 
 
-def query(message: str) -> str:
-    """调度入口（字符串输出），便于 HTTP/CLI 包装。"""
+def query(message: str) -> ScheduleResponse:
+    """
+    调度入口函数，返回 ScheduleResponse 对象，便于 JSON 序列化
+    
+    参数:
+        message: 用户输入消息字符串
+        
+    返回值:
+        ScheduleResponse: 调度响应对象，包含所有执行结果信息
+        
+    异常:
+        可能抛出 Schedule1Agent 初始化或执行相关的异常
+    """
     agent = Schedule1Agent()
-    res = agent.execute(message)
-
-    # 文本化输出（简要）
-    lines = [
-        f"查询: {res.query}",
-        f"状态: {res.status}",
-        f"Plan Agent: {res.selected_plan_agent_id or '无'}",
-        f"Tools 候选: {', '.join(res.selected_tools_agent_ids) or '无'}",
-        f"步骤数: {len(res.steps or [])}",
-        f"总结: {res.final_summary or ''}",
-    ]
-    return "\n".join(lines)
+    return agent.execute(message)
