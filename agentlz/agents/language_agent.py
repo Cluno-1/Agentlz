@@ -6,6 +6,11 @@ from mcp.server.fastmcp import FastMCP
 from langchain.agents import create_agent
 
 # 环境变量由 settings.py 统一管理，这里仅做引用
+# 确保脚本方式运行时可定位到项目根包
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
 from agentlz.config.settings import settings
 
 # 创建MCP服务器
@@ -27,7 +32,8 @@ async def language(num: str) -> str:
         model = init_chat_model(
             model=settings.MODEL_NAME,
             base_url=settings.MODEL_BASE_URL,
-            api_key=settings.OPENAI_API_KEY
+            api_key=settings.DEEPSEEK_API_KEY,
+            temperature=0.1,
         )
         system_prompt = """
           你是一个双关专家。将数学结果转化为有趣、生动的故事。

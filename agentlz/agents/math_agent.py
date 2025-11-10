@@ -6,17 +6,23 @@ from langchain_core.messages import HumanMessage
 from mcp.server.fastmcp import FastMCP
 from langchain.agents import create_agent
 from langchain_mcp_adapters.client import MultiServerMCPClient
+# 确保脚本方式运行时可定位到项目根包
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
 from agentlz.config.settings import settings
 
 # 创建MCP服务器
 mcp = FastMCP("MathAgent")
 call_stack = []
 tool_usage_count = {}
+_math_tool_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "tools", "math_tool.py"))
 math_client = MultiServerMCPClient({
     "math_mcp": {
         "transport": "stdio",
         "command": "python",
-        "args": [os.path.join(os.path.dirname(__file__), "..", "tools", "math_tool.py")]
+        "args": [_math_tool_path]
     }
 })
 
@@ -34,7 +40,8 @@ async def calculate(expression: str) -> str:
         model = init_chat_model(
             model=settings.MODEL_NAME,
             base_url=settings.MODEL_BASE_URL,
-            api_key=settings.OPENAI_API_KEY
+            api_key=settings.DEEPSEEK_API_KEY,
+            temperature=0.1,
         )
         system_prompt = """
         你是一个数学专家。将复杂问题分解为简单步骤，每次调用一个数学工具。
@@ -65,5 +72,8 @@ async def get_execution_stats() -> dict:
     }
 
 if __name__ == "__main__":
+    if sys.platform == "win32":
+        # 避免 Windows 控制台编码导致 stdio 传输异常
+        sys.stdout.reconfigure(encoding='utf-8')
     print("🚀 MathAgent MCP服务器启动...")
     mcp.run(transport="stdio")

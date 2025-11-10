@@ -8,13 +8,14 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain.agents import create_agent
 from agentlz.config.settings import settings
 from agentlz.tools.mcp_config_tool import get_mcp_config_by_keyword
+from agentlz.schemas.workflow import WorkflowPlan
 
 class FlowBuilderClient:
     def __init__(self, servers_config):
         self.client = MultiServerMCPClient(servers_config)
         self._tools_cache = None
         self._last_tool_refresh = 0
-        self._cache_ttl = 60
+        self._cache_ttl = 120
     async def get_tools_cached(self):
         current_time = time.time()
         if (self._tools_cache is None or current_time - self._last_tool_refresh > self._cache_ttl):
@@ -32,29 +33,29 @@ def build_workflow_chain(user_input: str):
         model = init_chat_model(
             model=settings.MODEL_NAME,
             base_url=settings.MODEL_BASE_URL,
-            api_key=settings.OPENAI_API_KEY,
+            api_key=settings.DEEPSEEK_API_KEY,
             temperature=0.1
         )
-        system_prompt = """
-        你是一个流程编排大师，根据任务要求编排MCP工具链并输出流程链。
-        请以JSON格式输出，包含：
-        - execution_chain: agent名称列表
-        - mcp_config: 每个agent的装配信息（字典）
-        示例：
-        {
-          "execution_chain": ["math_agent", "language_agent"],
-          "mcp_config": {
-            "math_agent": {...},
-            "language_agent": {...}
-          }
-        }
-        """
+        system_prompt = (
+            "你是一个流程编排大师。根据用户输入规划 execution_chain 和 mcp_config，"
+            "直接按响应格式输出，无需解释说明。"
+            "必须根据任务需求选择合适的 MCP agent：涉及数学计算时包含 MathAgent；"
+            "涉及写作、语言、双关、表达或润色时，需在链路末尾加入 LanguageAgent。"
+        )
         tools = [get_mcp_config_by_keyword]
-        agent = create_agent(model, tools, system_prompt=system_prompt)
+        agent = create_agent(
+            model=model,
+            tools=tools,
+            system_prompt=system_prompt,
+            response_format=WorkflowPlan,
+        )
         response = agent.invoke({
             "messages": [{"role": "user", "content": user_input}]
         })
-        return response["messages"][-1].content
+        # 返回结构化响应（dataclass）；严格模式：无结构化响应直接抛错，便于定位问题
+        if isinstance(response, dict) and response.get("structured_response") is not None:
+            return response["structured_response"]
+        raise ValueError(f"WorkflowPlan structured_response missing. Raw response: {response!r}")
     
     # 清理无关测试代码和多余内容，确保只暴露正式API
 
