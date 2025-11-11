@@ -130,3 +130,4 @@ xlsxwriter==3.2.9
 xxhash==3.6.0
 youtube-transcript-api==1.2.3
 zstandard==0.25.0
+PyMySQL>=1.1.0
