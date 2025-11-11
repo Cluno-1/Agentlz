@@ -8,11 +8,7 @@
 
 **运行命令**
 - 在项目根目录：
-<<<<<<< HEAD
   - `python -m test.executor.run_executor  
-=======
-  - `python -m test.executor.run_excutor`
->>>>>>> 762fe8e (refactor(docs): 更新文档引用路径并优化环境配置)
 - 环境配置 (.env)：`.env.expamle`
 
 ```env
