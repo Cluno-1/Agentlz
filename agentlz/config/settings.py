@@ -26,7 +26,8 @@ class Settings(BaseSettings):
     bing_api_key: str | None = Field(default=None, env="BING_API_KEY")
     
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
-
+    # 配置HuggingFace 中文句向量嵌入模型
+    hf_embedding_model: str = Field(default="BAAI/bge-small-zh-v1.5", env="HF_EMBEDDING_MODEL")
 
 def get_settings() -> Settings:
     return Settings()

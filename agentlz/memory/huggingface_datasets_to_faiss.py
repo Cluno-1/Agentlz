@@ -1,17 +1,13 @@
-import os
 import json
 from hashlib import sha256
 from typing import Any, Dict, List
 
-from agentlz.core.logger import setup_logging
 from agentlz.config.settings import get_settings
-from agentlz.core.model_factory import get_hf_embeddings
+from agentlz.core.logger import setup_logging
+from agentlz.core.embedding_model_factory import get_hf_embeddings
+from agentlz.services.faiss_service import FAISSVectorService
 
-try:
-    from langchain_community.vectorstores import Chroma
-except Exception:  # 兼容旧版本
-    from langchain.vectorstores import Chroma  # type: ignore
-
+settings = get_settings()
 
 def _concat_dialog(sample: Dict[str, Any]) -> str:
     """
@@ -29,6 +25,7 @@ def _concat_dialog(sample: Dict[str, Any]) -> str:
         "dialogue",
         "dialog",
         "utterances",
+        "human",
     ]
     for k in seq_keys:
         if k in sample and isinstance(sample[k], list):
@@ -57,7 +54,9 @@ def _concat_dialog(sample: Dict[str, Any]) -> str:
         "prompt",
         "output",
         "response",
+        "assistant",
         "answer",
+        "text",
     ]
     parts: List[str] = []
     for k in fallback_keys:
@@ -71,10 +70,16 @@ def _concat_dialog(sample: Dict[str, Any]) -> str:
     return json.dumps(sample, ensure_ascii=False)
 
 
-def persist_psydt_to_chroma(persist_dir: str) -> None:
+def persist_huggingface_datasets_to_faiss(
+    persist_dir: str,
+    dataset_name: str,
+    split: str = "train",
+    index_name: str = "huggingface_train",
+    max_docs: int | None = None,
+) -> None:
     """
-    将 ModelScope 数据集 YIRONGCHEN/PsyDTCorpus/train 的多轮对话拼接为文本，
-    使用本地 HuggingFace 中文句向量模型进行向量化，并持久化到指定目录的 Chroma 向量库。
+    将 HuggingFace 数据集 的多轮对话拼接为文本，
+    使用本地 HuggingFace 中文句向量模型进行向量化，并持久化到指定目录的 FAISS 向量库。
 
     要点：
     - 流式迭代样本，批量入库，避免一次性加载至内存（内存安全）。
@@ -82,38 +87,35 @@ def persist_psydt_to_chroma(persist_dir: str) -> None:
     - 通过确定性 ID 跳过已存在记录，保证可重复执行（幂等）。
 
     参数:
-        persist_dir: Chroma 持久化目录路径。
+        persist_dir: FAISS 索引持久化目录路径。
+        dataset_name: HuggingFace 数据集名称。
+        split: 数据集 split，默认 "train"。
+        index_name: FAISS 索引名称，默认 "huggingface_train"。
+        max_docs: 仅用于测试/调试时限制最大写入文档数（None 表示不限制）。
 
     返回:
         None
     """
-    settings = get_settings()
     logger = setup_logging(settings.log_level)
 
     try:
-        from modelscope.msdatasets import MsDataset  # 延迟导入，减少无关环境依赖
+        from datasets import load_dataset  # 使用 HuggingFace datasets 库
     except Exception as e:
         raise RuntimeError(
-            "缺少 modelscope 依赖，请先安装: pip install modelscope"
+            "缺少 datasets 依赖，请先安装: pip install datasets"
         ) from e
 
     # 1) Embeddings（允许通过环境变量 HF_EMBEDDING_MODEL 指定本地/自定义模型路径）
     embeddings = get_hf_embeddings(
-        model_name=os.getenv("HF_EMBEDDING_MODEL"),
-        device=os.getenv("HF_EMBEDDING_DEVICE") or None,
-        normalize_embeddings=True,
+        model_name=settings.hf_embedding_model,
     )
 
-    # 2) 初始化 Chroma（LangChain 兼容向量库封装）
-    collection_name = os.getenv("CHROMA_COLLECTION") or "psydt_train"
-    vectorstore = Chroma(
-        collection_name=collection_name,
-        persist_directory=persist_dir,
-        embedding_function=embeddings,
-    )
+    # 2) 初始化 FAISS 服务（统一 CRUD 封装）
+    svc = FAISSVectorService(persist_dir=persist_dir, index_name=index_name)
+    vectorstore = svc.load_or_create(embeddings)
 
-    # 3) 流式加载 ModelScope 数据集
-    ds = MsDataset.load("YIRONGCHEN/PsyDTCorpus", split="train")
+    # 3) 流式加载 HuggingFace 数据集
+    ds = load_dataset(dataset_name, split=split, streaming=True)
 
     batch_size = 64
     texts: List[str] = []
@@ -121,8 +123,9 @@ def persist_psydt_to_chroma(persist_dir: str) -> None:
     ids: List[str] = []
     total = 0
     skipped = 0
+    processed = 0
 
-    for sample in ds:  # MsDataset 是可迭代对象
+    for sample in ds:  # datasets 是可迭代对象
         text = _concat_dialog(sample)
 
         # 生成确定性 ID（优先使用样本自带 id/uid/sid，否则使用内容哈希）
@@ -146,9 +149,9 @@ def persist_psydt_to_chroma(persist_dir: str) -> None:
             pass
 
         meta = {
-            "dataset": "YIRONGCHEN/PsyDTCorpus",
-            "split": "train",
-            "source": "ModelScope",
+            "dataset": dataset_name,
+            "split": split,
+            "source": "HuggingFace",
         }
 
         texts.append(text)
@@ -156,19 +159,24 @@ def persist_psydt_to_chroma(persist_dir: str) -> None:
         ids.append(doc_id)
 
         if len(texts) >= batch_size:
-            vectorstore.add_texts(texts=texts, metadatas=metadatas, ids=ids)
-            vectorstore.persist()  # 及时落盘向量，保证可重复执行与恢复
+            # 批量写入与保存
+            vectorstore = svc.add_texts(vectorstore, texts=texts, metadatas=metadatas, ids=ids, embeddings=embeddings)
+            svc.save(vectorstore)
             total += len(texts)
+            processed += len(texts)
             texts.clear()
             metadatas.clear()
             ids.clear()
+            # 测试场景限制条数
+            if max_docs is not None and processed >= max_docs:
+                break
 
     # 收尾批次
     if texts:
-        vectorstore.add_texts(texts=texts, metadatas=metadatas, ids=ids)
-        vectorstore.persist()
+        vectorstore = svc.add_texts(vectorstore, texts=texts, metadatas=metadatas, ids=ids, embeddings=embeddings)
+        svc.save(vectorstore)
         total += len(texts)
 
     logger.info(
-        f"PsyDTCorpus(train) 已写入向量: {total} 条，重复跳过: {skipped} 条，目录: {persist_dir}"
+        f"PsyDTCorpus({split}) 已写入向量: {total} 条，重复跳过: {skipped} 条，索引保存到: {persist_dir}/{index_name}.faiss"
     )
