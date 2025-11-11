@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     smtp_ssl_port: int = Field(default=465, env="SMTP_SSL_PORT")
     imap_host: str = Field(default="imap.163.com", env="IMAP_HOST")
     # model
-    model_name: str = Field(default="glm-4.5", env="MODEL_NAME")
+    model_name: str = Field(default=None, env="MODEL_NAME")
     model_temperature: float = Field(default=0.0, env="MODEL_TEMPERATURE")
     system_prompt: str = Field(default="You are a helpful assistant.", env="SYSTEM_PROMPT")
     log_level: str = Field(default="INFO", env="LOG_LEVEL")
@@ -26,7 +26,8 @@ class Settings(BaseSettings):
     bing_api_key: str | None = Field(default=None, env="BING_API_KEY")
     
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
-
+    # 配置HuggingFace 中文句向量嵌入模型
+    hf_embedding_model: str = Field(default="BAAI/bge-small-zh-v1.5", env="HF_EMBEDDING_MODEL")
 
 def get_settings() -> Settings:
     return Settings()
