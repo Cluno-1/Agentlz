@@ -10,3 +10,9 @@
 - `ops.md`：运行与部署、配置与密钥管理、监控与告警
 
 如需新增文档，请遵循目录与命名规范，避免循环依赖，并在提交前通过本地格式化与 lint。
+
+## 启动服务器
+
+- 开发模式：`uvicorn agentlz.app.http_langserve:app --port 8000 --reload`
+- 生产示例：`uvicorn agentlz.app.http_langserve:app --host 0.0.0.0 --port 8000`
+- 健康检查：访问 `http://localhost:8000/v1/health` 返回 `{"status": "ok"}`
